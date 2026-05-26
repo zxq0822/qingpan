@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import QRCode from "qrcode";
-import { SUPABASE_BUCKET, supabase } from "@/lib/supabaseClient";
+import { SUPABASE_BUCKET, getSupabaseClient } from "@/lib/supabaseClient";
 
 function createRandomCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -65,6 +65,12 @@ export default function Home() {
   };
 
   const reserveCode = async (desiredCode: string) => {
+    const supabase = getSupabaseClient();
+
+    if (!supabase) {
+      throw new Error("Missing Supabase configuration.");
+    }
+
     const { data, error } = await supabase
       .from("qingpan_files")
       .select("code")
@@ -83,6 +89,12 @@ export default function Home() {
       return;
     }
     if (!ensureEnvReady()) return;
+
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      setStatus("Missing Supabase configuration.");
+      return;
+    }
 
     setIsUploading(true);
     setStatus(null);
@@ -156,6 +168,12 @@ export default function Home() {
       return;
     }
     if (!ensureEnvReady()) return;
+
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      setStatus("Missing Supabase configuration.");
+      return;
+    }
 
     setIsLookingUp(true);
     setStatus(null);
