@@ -61,7 +61,7 @@ If uploads are denied, run the SQL in [`supabase-policies.sql`](supabase-policie
 
 - `qingpan_files` table RLS policies
 - `storage.buckets` setup for the `qingpan` bucket
-- `storage.objects` upload/read policies for the `qingpan` bucket
+- `storage.objects` upload/read/update/delete policies for the `qingpan` bucket
 - a cleanup function + hourly cron to purge expired files
 
 ## Local dev

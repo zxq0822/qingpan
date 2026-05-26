@@ -63,6 +63,14 @@ for select
 to anon, authenticated
 using (bucket_id = 'qingpan');
 
+drop policy if exists "allow update in qingpan bucket" on storage.objects;
+create policy "allow update in qingpan bucket"
+on storage.objects
+for update
+to anon, authenticated
+using (bucket_id = 'qingpan')
+with check (bucket_id = 'qingpan');
+
 drop policy if exists "allow delete from qingpan bucket" on storage.objects;
 create policy "allow delete from qingpan bucket"
 on storage.objects

@@ -31,6 +31,7 @@ export default function Home() {
   const [previewKind, setPreviewKind] = useState<
     "image" | "pdf" | "video" | "audio" | "other" | null
   >(null);
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [expiryOption, setExpiryOption] = useState<"24h" | "7d" | "forever">(
     "24h"
   );
@@ -139,6 +140,12 @@ export default function Home() {
     return new Date(now + delta).toISOString();
   };
 
+  const formatExpiryText = (value: string | null, option: "24h" | "7d" | "forever") => {
+    if (option === "forever") return "永久";
+    if (!value) return "未知";
+    return new Date(value).toLocaleString();
+  };
+
   const uploadFile = async (nextFile: File) => {
     if (!ensureEnvReady()) return;
 
@@ -156,6 +163,7 @@ export default function Home() {
     setGeneratedCode("");
     setUploadedPath(null);
     setUploadedFileName(null);
+    setExpiresAt(null);
     setIsModalOpen(false);
 
     let nextCode = createRandomCode().toUpperCase();
@@ -211,6 +219,7 @@ export default function Home() {
     setGeneratedCode(nextCode);
     setUploadedPath(storagePath);
     setUploadedFileName(nextFile.name);
+    setExpiresAt(expiresAt);
     setStatus("取件码已生成。");
     await buildQr(nextCode);
     setIsModalOpen(true);
@@ -238,6 +247,7 @@ export default function Home() {
       return;
     }
 
+    setExpiresAt(expiresAt);
     setStatus("有效期已更新。");
   };
 
@@ -278,7 +288,7 @@ export default function Home() {
 
     if (moveError) {
       setIsRefreshing(false);
-      setStatus("刷新失败，请稍后重试。");
+      setStatus(`刷新失败：${moveError.message}`);
       return;
     }
 
@@ -296,6 +306,7 @@ export default function Home() {
 
     setGeneratedCode(nextCode);
     setUploadedPath(nextPath);
+    setExpiresAt(expiresAt);
     await buildQr(nextCode);
     setStatus("取件码已刷新。");
     setIsRefreshing(false);
@@ -503,7 +514,7 @@ export default function Home() {
           </div>
 
           <div className="rounded-3xl border border-black/10 bg-white/80 p-5 backdrop-blur sm:p-8">
-            <div className="flex flex-col items-center gap-3 text-center sm:gap-4">
+            <div className="flex min-h-[240px] flex-col items-center justify-center gap-3 text-center sm:gap-4">
               <input
                 type="text"
                 value={lookupCode}
@@ -606,9 +617,24 @@ export default function Home() {
                   type="button"
                   onClick={refreshCode}
                   disabled={isRefreshing}
-                  className="flex-1 rounded-full border border-black/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] disabled:opacity-60 sm:tracking-widest"
+                  className="flex h-9 w-9 items-center justify-center rounded-full border border-black/10 text-xs font-semibold disabled:opacity-60"
+                  aria-label="刷新取件码"
+                  title="刷新取件码"
                 >
-                  {isRefreshing ? "刷新中..." : "刷新取件码"}
+                  <span className="sr-only">刷新取件码</span>
+                  <svg
+                    className={isRefreshing ? "h-4 w-4 animate-spin" : "h-4 w-4"}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                    <path d="M21 3v6h-6" />
+                  </svg>
                 </button>
                 <button
                   type="button"
@@ -640,6 +666,9 @@ export default function Home() {
                   <option value="7d">7天</option>
                   <option value="forever">永久</option>
                 </select>
+                <div className="text-xs text-ink-muted">
+                  到期时间：{formatExpiryText(expiresAt, expiryOption)}
+                </div>
               </div>
               {qrDataUrl ? (
                 <div className="mt-4 flex justify-center">
