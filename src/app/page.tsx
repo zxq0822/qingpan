@@ -25,6 +25,9 @@ export default function Home() {
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [downloadName, setDownloadName] = useState<string | null>(null);
+  const [previewKind, setPreviewKind] = useState<
+    "image" | "pdf" | "video" | "audio" | "other" | null
+  >(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isScanOpen, setIsScanOpen] = useState(false);
@@ -90,6 +93,34 @@ export default function Home() {
       throw new Error("取件码校验失败。");
     }
     return !data;
+  };
+
+  const resolvePreviewKind = (name: string, type?: string | null) => {
+    const lowerName = name.toLowerCase();
+    if (type?.startsWith("image/")) return "image";
+    if (type?.startsWith("video/")) return "video";
+    if (type?.startsWith("audio/")) return "audio";
+    if (type === "application/pdf" || lowerName.endsWith(".pdf")) return "pdf";
+    if (
+      lowerName.endsWith(".png") ||
+      lowerName.endsWith(".jpg") ||
+      lowerName.endsWith(".jpeg") ||
+      lowerName.endsWith(".webp") ||
+      lowerName.endsWith(".gif")
+    ) {
+      return "image";
+    }
+    if (
+      lowerName.endsWith(".mp4") ||
+      lowerName.endsWith(".webm") ||
+      lowerName.endsWith(".mov")
+    ) {
+      return "video";
+    }
+    if (lowerName.endsWith(".mp3") || lowerName.endsWith(".wav")) {
+      return "audio";
+    }
+    return "other";
   };
 
   const uploadFile = async (nextFile: File) => {
@@ -261,10 +292,11 @@ export default function Home() {
     setStatus(null);
     setDownloadUrl(null);
     setDownloadName(null);
+    setPreviewKind(null);
 
     const { data, error } = await supabase
       .from("qingpan_files")
-      .select("path, filename")
+      .select("path, filename, content_type")
       .eq("code", lookupCode.trim().toUpperCase())
       .maybeSingle();
 
@@ -286,6 +318,7 @@ export default function Home() {
 
     setDownloadUrl(publicData.publicUrl);
     setDownloadName(data.filename);
+    setPreviewKind(resolvePreviewKind(data.filename, data.content_type));
     setStatus("文件已就绪，可下载。");
     setIsLookingUp(false);
   };
@@ -294,7 +327,7 @@ export default function Home() {
     <div className="min-h-screen px-4 py-10 sm:px-6 sm:py-16">
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-8 sm:gap-10">
         <header className="flex flex-col gap-2 sm:gap-3">
-          <h1 className="font-[var(--font-space-grotesk)] text-3xl font-semibold uppercase tracking-[0.2em] text-foreground sm:text-5xl sm:tracking-[0.35em]">
+          <h1 className="font-[var(--font-display)] text-3xl font-semibold tracking-[0.12em] text-foreground sm:text-5xl sm:tracking-[0.2em]">
             QingPan
           </h1>
         </header>
@@ -316,10 +349,9 @@ export default function Home() {
                   void uploadFile(dropped);
                 }
               }}
-              className={`flex min-h-[200px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-4 text-center text-sm transition sm:min-h-[240px] sm:px-6 ${
-                isDragging
-                  ? "border-foreground bg-black/5"
-                  : "border-black/10 bg-white"
+              className={`flex min-h-[200px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-4 text-center text-sm transition sm:min-h-[240px] sm:px-6 ${isDragging
+                ? "border-foreground bg-black/5"
+                : "border-black/10 bg-white"
                 }`}
             >
               <input
@@ -354,15 +386,15 @@ export default function Home() {
           </div>
 
           <div className="rounded-3xl border border-black/10 bg-white/80 p-5 backdrop-blur sm:p-8">
-            <div className="flex flex-col gap-3 sm:gap-4">
+            <div className="flex flex-col items-center gap-3 text-center sm:gap-4">
               <input
                 type="text"
                 value={lookupCode}
                 onChange={(event) => setLookupCode(event.target.value.toUpperCase())}
                 placeholder="输入取件码"
-                className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm uppercase tracking-[0.2em] sm:tracking-widest"
+                className="w-full max-w-sm rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm uppercase tracking-[0.2em] sm:tracking-widest"
               />
-              <div className="flex flex-col gap-2 sm:flex-row sm:gap-3">
+              <div className="flex w-full max-w-sm flex-col gap-2 sm:flex-row sm:gap-3">
                 <button
                   type="button"
                   onClick={handleLookup}
@@ -379,18 +411,55 @@ export default function Home() {
                   扫码
                 </button>
               </div>
-              {downloadUrl ? (
-                <a
-                  href={downloadUrl}
-                  className="rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-foreground"
-                  download={downloadName ?? undefined}
-                >
-                  下载 {downloadName ?? "文件"}
-                </a>
-              ) : null}
             </div>
           </div>
         </section>
+
+        {downloadUrl ? (
+          <div className="rounded-3xl border border-black/10 bg-white/80 p-5 text-sm text-foreground shadow-[0_20px_60px_-45px_rgba(20,17,15,0.5)] backdrop-blur sm:p-6">
+            <div className="flex flex-col gap-4">
+              <div className="text-xs uppercase tracking-[0.3em] text-ink-muted">
+                预览
+              </div>
+              {previewKind === "image" ? (
+                <img
+                  src={downloadUrl}
+                  alt={downloadName ?? "预览"}
+                  className="max-h-[420px] w-full rounded-2xl object-contain"
+                />
+              ) : null}
+              {previewKind === "pdf" ? (
+                <iframe
+                  src={downloadUrl}
+                  className="h-[420px] w-full rounded-2xl border border-black/10"
+                  title={downloadName ?? "PDF"}
+                />
+              ) : null}
+              {previewKind === "video" ? (
+                <video
+                  src={downloadUrl}
+                  controls
+                  className="max-h-[420px] w-full rounded-2xl"
+                />
+              ) : null}
+              {previewKind === "audio" ? (
+                <audio src={downloadUrl} controls className="w-full" />
+              ) : null}
+              {previewKind === "other" ? (
+                <div className="rounded-2xl border border-dashed border-black/15 bg-white px-4 py-6 text-center text-xs text-ink-muted">
+                  无法预览该格式，请直接下载文件。
+                </div>
+              ) : null}
+              <a
+                href={downloadUrl}
+                className="rounded-full bg-foreground px-5 py-3 text-center text-sm font-semibold uppercase tracking-[0.2em] text-background transition hover:translate-y-[-1px] sm:tracking-widest"
+                download={downloadName ?? undefined}
+              >
+                下载 {downloadName ?? "文件"}
+              </a>
+            </div>
+          </div>
+        ) : null}
 
         {isModalOpen ? (
           <div
@@ -412,7 +481,7 @@ export default function Home() {
                   关闭
                 </button>
               </div>
-              <div className="mt-3 text-center font-[var(--font-space-grotesk)] text-xl tracking-[0.2em] sm:mt-4 sm:text-2xl">
+              <div className="mt-3 text-center font-[var(--font-display)] text-xl tracking-[0.2em] sm:mt-4 sm:text-2xl">
                 {generatedCode}
               </div>
               <div className="mt-3 flex gap-3">

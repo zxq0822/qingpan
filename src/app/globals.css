@@ -15,7 +15,7 @@
   --color-accent: var(--accent);
   --color-accent-deep: var(--accent-deep);
   --font-sans: var(--font-work-sans);
-  --font-display: var(--font-space-grotesk);
+  --font-display: var(--font-sora);
 }
 
 body {
