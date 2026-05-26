@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { SUPABASE_BUCKET, getSupabaseClient } from "@/lib/supabaseClient";
 
@@ -25,6 +25,8 @@ export default function Home() {
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [downloadName, setDownloadName] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const fileMeta = useMemo(() => {
     if (!file) return null;
@@ -83,11 +85,7 @@ export default function Home() {
     return !data;
   };
 
-  const handleGenerate = async (useCustom: boolean) => {
-    if (!file) {
-      setStatus("Select a file first.");
-      return;
-    }
+  const uploadFile = async (nextFile: File) => {
     if (!ensureEnvReady()) return;
 
     const supabase = getSupabaseClient();
@@ -100,19 +98,14 @@ export default function Home() {
     setStatus(null);
     setDownloadUrl(null);
     setDownloadName(null);
+    setQrDataUrl(null);
+    setGeneratedCode("");
 
-    let nextCode = useCustom && customCode.trim() ? customCode.trim() : createRandomCode();
-    nextCode = nextCode.toUpperCase();
-
+    let nextCode = createRandomCode().toUpperCase();
     let attempts = 0;
     while (attempts < 5) {
       const available = await reserveCode(nextCode);
       if (available) break;
-      if (useCustom) {
-        setIsUploading(false);
-        setStatus("This pickup code already exists.");
-        return;
-      }
       nextCode = createRandomCode();
       attempts += 1;
     }
@@ -123,12 +116,12 @@ export default function Home() {
       return;
     }
 
-    const safeName = file.name.replace(/[^a-zA-Z0-9_.-]/g, "_");
+    const safeName = nextFile.name.replace(/[^a-zA-Z0-9_.-]/g, "_");
     const storagePath = `${nextCode}/${Date.now()}_${safeName}`;
 
     const { error: uploadError } = await supabase.storage
       .from(SUPABASE_BUCKET)
-      .upload(storagePath, file, {
+      .upload(storagePath, nextFile, {
         upsert: false,
       });
 
@@ -143,9 +136,9 @@ export default function Home() {
       .insert({
         code: nextCode,
         path: storagePath,
-        filename: file.name,
-        size: file.size,
-        content_type: file.type,
+        filename: nextFile.name,
+        size: nextFile.size,
+        content_type: nextFile.type,
       })
       .select("code")
       .single();
@@ -219,121 +212,109 @@ export default function Home() {
 
         <section className="grid gap-6 lg:grid-cols-2">
           <div className="rounded-3xl border border-black/10 bg-white/80 p-8 shadow-[0_30px_80px_-50px_rgba(20,17,15,0.6)] backdrop-blur">
-            <div className="flex items-start justify-between gap-6">
-              <h2 className="font-[var(--font-space-grotesk)] text-2xl font-semibold">
+            <label
+              onDragOver={(event) => {
+                event.preventDefault();
+                setIsDragging(true);
+              }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={(event) => {
+                event.preventDefault();
+                setIsDragging(false);
+                const dropped = event.dataTransfer.files?.[0];
+                if (dropped) {
+                  setFile(dropped);
+                  void uploadFile(dropped);
+                }
+              }}
+              className={`flex min-h-[240px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 text-center text-sm transition ${isDragging
+                  ? "border-foreground bg-black/5"
+                  : "border-black/10 bg-white"
+                }`}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                onChange={(event) => {
+                  const picked = event.target.files?.[0] ?? null;
+                  setFile(picked);
+                  if (picked) {
+                    void uploadFile(picked);
+                  }
+                }}
+              />
+              <div className="text-base font-semibold uppercase tracking-[0.3em]">
                 Upload
-              </h2>
-              <span className="rounded-full bg-accent px-4 py-1 text-xs font-semibold uppercase text-white">
-                Live
-              </span>
-            </div>
-
-            <div className="mt-8 flex flex-col gap-6">
-              <label className="flex flex-col gap-2 text-sm font-semibold text-foreground">
-                File
-                <input
-                  type="file"
-                  onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-                  className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm"
-                />
-                {fileMeta ? (
-                  <span className="text-xs text-ink-muted">{fileMeta}</span>
-                ) : null}
-              </label>
-
-              <label className="flex flex-col gap-2 text-sm font-semibold text-foreground">
-                Custom pickup code (optional)
-                <input
-                  type="text"
-                  value={customCode}
-                  onChange={(event) => setCustomCode(event.target.value.toUpperCase())}
-                  placeholder="e.g. QP8X7K"
-                  className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm uppercase tracking-widest"
-                />
-              </label>
-
-              <div className="flex flex-wrap gap-3">
-                <button
-                  type="button"
-                  onClick={() => handleGenerate(false)}
-                  disabled={isUploading}
-                  className="rounded-full bg-foreground px-5 py-3 text-sm font-semibold uppercase tracking-widest text-background transition hover:translate-y-[-1px] disabled:opacity-60"
-                >
-                  {isUploading ? "Uploading..." : "Generate random"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleGenerate(true)}
-                  disabled={isUploading}
-                  className="rounded-full border border-foreground/20 px-5 py-3 text-sm font-semibold uppercase tracking-widest text-foreground transition hover:border-foreground disabled:opacity-60"
-                >
-                  Use custom
-                </button>
               </div>
-
-              <div className="rounded-2xl border border-dashed border-black/15 bg-black/5 p-6">
-                <p className="text-xs uppercase tracking-[0.3em] text-ink-muted">
-                  Pickup code
-                </p>
-                <p className="mt-2 font-[var(--font-space-grotesk)] text-3xl tracking-[0.2em]">
-                  {generatedCode || "------"}
-                </p>
+              <div className="mt-3 text-ink-muted">
+                Click to choose a file or drag it here.
               </div>
-            </div>
+              {isUploading ? (
+                <div className="mt-4 text-xs uppercase tracking-[0.3em] text-ink-muted">
+                  Uploading...
+                </div>
+              ) : null}
+              {fileMeta ? (
+                <div className="mt-4 text-xs text-ink-muted">{fileMeta}</div>
+              ) : null}
+            </label>
           </div>
 
-          <div className="flex flex-col gap-6">
-            <div className="rounded-3xl border border-black/10 bg-white/80 p-6 backdrop-blur">
-              <div className="flex items-center justify-between">
-                <h3 className="font-[var(--font-space-grotesk)] text-xl font-semibold">
-                  Pickup
-                </h3>
-                <div className="text-xs uppercase tracking-[0.3em] text-ink-muted">
-                  QR
-                </div>
-              </div>
-              <div className="mt-4 flex min-h-[200px] items-center justify-center rounded-2xl border border-black/10 bg-white">
-                {qrDataUrl ? (
-                  <img src={qrDataUrl} alt="Pickup QR" className="h-40 w-40" />
-                ) : (
-                  <p className="text-sm text-ink-muted">
-                    {isGenerating ? "Generating..." : "No QR yet."}
-                  </p>
-                )}
-              </div>
-              <div className="mt-4 flex flex-col gap-3">
-                <input
-                  type="text"
-                  value={lookupCode}
-                  onChange={(event) => setLookupCode(event.target.value.toUpperCase())}
-                  placeholder="Enter pickup code"
-                  className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm uppercase tracking-widest"
-                />
+          <div className="rounded-3xl border border-black/10 bg-white/80 p-8 backdrop-blur">
+            <div className="flex flex-col gap-4">
+              <input
+                type="text"
+                value={lookupCode}
+                onChange={(event) => setLookupCode(event.target.value.toUpperCase())}
+                placeholder="Enter pickup code"
+                className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm uppercase tracking-widest"
+              />
+              <div className="flex gap-3">
                 <button
                   type="button"
                   onClick={handleLookup}
                   disabled={isLookingUp}
-                  className="rounded-full bg-accent px-5 py-3 text-sm font-semibold uppercase tracking-widest text-white transition hover:bg-accent-deep disabled:opacity-60"
+                  className="flex-1 rounded-full bg-foreground px-5 py-3 text-sm font-semibold uppercase tracking-widest text-background transition hover:translate-y-[-1px] disabled:opacity-60"
                 >
                   {isLookingUp ? "Searching..." : "Get file"}
                 </button>
-                {downloadUrl ? (
-                  <a
-                    href={downloadUrl}
-                    className="rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-foreground"
-                    download={downloadName ?? undefined}
-                  >
-                    Download {downloadName ?? "file"}
-                  </a>
-                ) : (
-                  <div className="rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm">
-                    Waiting for a valid pickup code.
-                  </div>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setStatus("Please scan with your phone camera.")}
+                  className="flex-1 rounded-full border border-foreground/20 px-5 py-3 text-sm font-semibold uppercase tracking-widest text-foreground transition hover:border-foreground"
+                >
+                  Scan QR
+                </button>
               </div>
+              {downloadUrl ? (
+                <a
+                  href={downloadUrl}
+                  className="rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-foreground"
+                  download={downloadName ?? undefined}
+                >
+                  Download {downloadName ?? "file"}
+                </a>
+              ) : null}
             </div>
           </div>
         </section>
+
+        {generatedCode ? (
+          <div className="flex flex-col gap-4 rounded-3xl border border-black/10 bg-white/80 p-6 text-sm text-foreground">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs uppercase tracking-[0.4em] text-ink-muted">
+                Pickup code
+              </div>
+              <div className="font-[var(--font-space-grotesk)] text-2xl tracking-[0.2em]">
+                {generatedCode}
+              </div>
+            </div>
+            {qrDataUrl ? (
+              <img src={qrDataUrl} alt="Pickup QR" className="h-32 w-32" />
+            ) : null}
+          </div>
+        ) : null}
 
         {status ? (
           <div className="rounded-full border border-black/10 bg-white/80 px-6 py-3 text-sm text-foreground">
