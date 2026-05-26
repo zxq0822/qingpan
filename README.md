@@ -16,8 +16,11 @@ create table if not exists public.qingpan_files (
 	filename text not null,
 	size bigint,
 	content_type text,
+	expires_at timestamptz,
 	created_at timestamptz default now()
 );
+
+alter table public.qingpan_files add column if not exists expires_at timestamptz;
 
 alter table public.qingpan_files enable row level security;
 
@@ -30,6 +33,19 @@ with check (true);
 create policy "allow select qingpan_files"
 on public.qingpan_files
 for select
+to anon, authenticated
+using (true);
+
+create policy "allow update qingpan_files"
+on public.qingpan_files
+for update
+to anon, authenticated
+using (true)
+with check (true);
+
+create policy "allow delete qingpan_files"
+on public.qingpan_files
+for delete
 to anon, authenticated
 using (true);
 ```
@@ -46,6 +62,7 @@ If uploads are denied, run the SQL in [`supabase-policies.sql`](supabase-policie
 - `qingpan_files` table RLS policies
 - `storage.buckets` setup for the `qingpan` bucket
 - `storage.objects` upload/read policies for the `qingpan` bucket
+- a cleanup function + hourly cron to purge expired files
 
 ## Local dev
 

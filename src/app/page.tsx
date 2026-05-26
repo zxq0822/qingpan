@@ -17,17 +17,23 @@ function createRandomCode() {
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [generatedCode, setGeneratedCode] = useState("");
+  const [uploadedPath, setUploadedPath] = useState<string | null>(null);
+  const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [lookupCode, setLookupCode] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isLookingUp, setIsLookingUp] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [downloadName, setDownloadName] = useState<string | null>(null);
   const [previewKind, setPreviewKind] = useState<
     "image" | "pdf" | "video" | "audio" | "other" | null
   >(null);
+  const [expiryOption, setExpiryOption] = useState<"24h" | "7d" | "forever">(
+    "24h"
+  );
   const [isDragging, setIsDragging] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isScanOpen, setIsScanOpen] = useState(false);
@@ -123,6 +129,16 @@ export default function Home() {
     return "other";
   };
 
+  const sanitizeFileName = (name: string) =>
+    name.replace(/[^a-zA-Z0-9_.-]/g, "_");
+
+  const buildExpiresAt = (option: "24h" | "7d" | "forever") => {
+    if (option === "forever") return null;
+    const now = Date.now();
+    const delta = option === "24h" ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+    return new Date(now + delta).toISOString();
+  };
+
   const uploadFile = async (nextFile: File) => {
     if (!ensureEnvReady()) return;
 
@@ -138,6 +154,8 @@ export default function Home() {
     setDownloadName(null);
     setQrDataUrl(null);
     setGeneratedCode("");
+    setUploadedPath(null);
+    setUploadedFileName(null);
     setIsModalOpen(false);
 
     let nextCode = createRandomCode().toUpperCase();
@@ -155,8 +173,9 @@ export default function Home() {
       return;
     }
 
-    const safeName = nextFile.name.replace(/[^a-zA-Z0-9_.-]/g, "_");
+    const safeName = sanitizeFileName(nextFile.name);
     const storagePath = `${nextCode}/${Date.now()}_${safeName}`;
+    const expiresAt = buildExpiresAt(expiryOption);
 
     const { error: uploadError } = await supabase.storage
       .from(SUPABASE_BUCKET)
@@ -178,6 +197,7 @@ export default function Home() {
         filename: nextFile.name,
         size: nextFile.size,
         content_type: nextFile.type,
+        expires_at: expiresAt,
       })
       .select("code")
       .single();
@@ -189,10 +209,96 @@ export default function Home() {
     }
 
     setGeneratedCode(nextCode);
+    setUploadedPath(storagePath);
+    setUploadedFileName(nextFile.name);
     setStatus("取件码已生成。");
     await buildQr(nextCode);
     setIsModalOpen(true);
     setIsUploading(false);
+  };
+
+  const updateExpiry = async (option: "24h" | "7d" | "forever") => {
+    setExpiryOption(option);
+    if (!generatedCode) return;
+
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      setStatus("缺少 Supabase 配置。");
+      return;
+    }
+
+    const expiresAt = buildExpiresAt(option);
+    const { error } = await supabase
+      .from("qingpan_files")
+      .update({ expires_at: expiresAt })
+      .eq("code", generatedCode);
+
+    if (error) {
+      setStatus("更新有效期失败。");
+      return;
+    }
+
+    setStatus("有效期已更新。");
+  };
+
+  const refreshCode = async () => {
+    if (!uploadedPath || !uploadedFileName || !generatedCode) {
+      return;
+    }
+
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      setStatus("缺少 Supabase 配置。");
+      return;
+    }
+
+    setIsRefreshing(true);
+    setStatus(null);
+
+    let nextCode = createRandomCode().toUpperCase();
+    let attempts = 0;
+    while (attempts < 5) {
+      const available = await reserveCode(nextCode);
+      if (available) break;
+      nextCode = createRandomCode();
+      attempts += 1;
+    }
+
+    if (attempts === 5) {
+      setIsRefreshing(false);
+      setStatus("刷新取件码失败，请重试。");
+      return;
+    }
+
+    const safeName = sanitizeFileName(uploadedFileName);
+    const nextPath = `${nextCode}/${Date.now()}_${safeName}`;
+    const { error: moveError } = await supabase.storage
+      .from(SUPABASE_BUCKET)
+      .move(uploadedPath, nextPath);
+
+    if (moveError) {
+      setIsRefreshing(false);
+      setStatus("刷新失败，请稍后重试。");
+      return;
+    }
+
+    const expiresAt = buildExpiresAt(expiryOption);
+    const { error: updateError } = await supabase
+      .from("qingpan_files")
+      .update({ code: nextCode, path: nextPath, expires_at: expiresAt })
+      .eq("code", generatedCode);
+
+    if (updateError) {
+      setIsRefreshing(false);
+      setStatus("更新取件码失败。");
+      return;
+    }
+
+    setGeneratedCode(nextCode);
+    setUploadedPath(nextPath);
+    await buildQr(nextCode);
+    setStatus("取件码已刷新。");
+    setIsRefreshing(false);
   };
 
   const stopScan = () => {
@@ -296,7 +402,7 @@ export default function Home() {
 
     const { data, error } = await supabase
       .from("qingpan_files")
-      .select("path, filename, content_type")
+      .select("path, filename, content_type, expires_at")
       .eq("code", lookupCode.trim().toUpperCase())
       .maybeSingle();
 
@@ -304,6 +410,17 @@ export default function Home() {
       setIsLookingUp(false);
       setStatus("未找到对应文件。");
       return;
+    }
+
+    if (data.expires_at) {
+      const expiresAt = new Date(data.expires_at).getTime();
+      if (Number.isFinite(expiresAt) && Date.now() > expiresAt) {
+        await supabase.from("qingpan_files").delete().eq("code", lookupCode.trim().toUpperCase());
+        await supabase.storage.from(SUPABASE_BUCKET).remove([data.path]);
+        setIsLookingUp(false);
+        setStatus("取件码已过期，文件已删除。");
+        return;
+      }
     }
 
     const { data: publicData } = supabase.storage
@@ -484,7 +601,15 @@ export default function Home() {
               <div className="mt-3 text-center font-[var(--font-display)] text-xl tracking-[0.2em] sm:mt-4 sm:text-2xl">
                 {generatedCode}
               </div>
-              <div className="mt-3 flex gap-3">
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:gap-3">
+                <button
+                  type="button"
+                  onClick={refreshCode}
+                  disabled={isRefreshing}
+                  className="flex-1 rounded-full border border-black/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] disabled:opacity-60 sm:tracking-widest"
+                >
+                  {isRefreshing ? "刷新中..." : "刷新取件码"}
+                </button>
                 <button
                   type="button"
                   onClick={async () => {
@@ -499,6 +624,22 @@ export default function Home() {
                 >
                   复制取件码
                 </button>
+              </div>
+              <div className="mt-3 flex flex-col gap-2">
+                <div className="text-[11px] uppercase tracking-[0.25em] text-ink-muted">
+                  有效期
+                </div>
+                <select
+                  value={expiryOption}
+                  onChange={(event) =>
+                    updateExpiry(event.target.value as "24h" | "7d" | "forever")
+                  }
+                  className="w-full rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em]"
+                >
+                  <option value="24h">24小时</option>
+                  <option value="7d">7天</option>
+                  <option value="forever">永久</option>
+                </select>
               </div>
               {qrDataUrl ? (
                 <div className="mt-4 flex justify-center">
