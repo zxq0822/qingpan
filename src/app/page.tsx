@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import jsQR from "jsqr";
 import QRCode from "qrcode";
 import { SUPABASE_BUCKET, getSupabaseClient } from "@/lib/supabaseClient";
 
@@ -15,7 +16,6 @@ function createRandomCode() {
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
-  const [customCode, setCustomCode] = useState("");
   const [generatedCode, setGeneratedCode] = useState("");
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -26,7 +26,14 @@ export default function Home() {
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [downloadName, setDownloadName] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isScanOpen, setIsScanOpen] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const scanFrameRef = useRef<number | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const fileMeta = useMemo(() => {
     if (!file) return null;
@@ -48,7 +55,7 @@ export default function Home() {
       setQrDataUrl(dataUrl);
     } catch {
       setQrDataUrl(null);
-      setStatus("Failed to build QR. Try again.");
+      setStatus("二维码生成失败，请重试。");
     } finally {
       setIsGenerating(false);
     }
@@ -56,11 +63,11 @@ export default function Home() {
 
   const ensureEnvReady = () => {
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
-      setStatus("Missing NEXT_PUBLIC_SUPABASE_URL.");
+      setStatus("缺少环境变量 NEXT_PUBLIC_SUPABASE_URL。");
       return false;
     }
     if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-      setStatus("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY.");
+      setStatus("缺少环境变量 NEXT_PUBLIC_SUPABASE_ANON_KEY。");
       return false;
     }
     return true;
@@ -70,7 +77,7 @@ export default function Home() {
     const supabase = getSupabaseClient();
 
     if (!supabase) {
-      throw new Error("Missing Supabase configuration.");
+      throw new Error("缺少 Supabase 配置。");
     }
 
     const { data, error } = await supabase
@@ -80,7 +87,7 @@ export default function Home() {
       .maybeSingle();
 
     if (error) {
-      throw new Error("Failed to validate code.");
+      throw new Error("取件码校验失败。");
     }
     return !data;
   };
@@ -90,7 +97,7 @@ export default function Home() {
 
     const supabase = getSupabaseClient();
     if (!supabase) {
-      setStatus("Missing Supabase configuration.");
+      setStatus("缺少 Supabase 配置。");
       return;
     }
 
@@ -100,6 +107,7 @@ export default function Home() {
     setDownloadName(null);
     setQrDataUrl(null);
     setGeneratedCode("");
+    setIsModalOpen(false);
 
     let nextCode = createRandomCode().toUpperCase();
     let attempts = 0;
@@ -112,7 +120,7 @@ export default function Home() {
 
     if (attempts === 5) {
       setIsUploading(false);
-      setStatus("Please retry, code generation failed.");
+      setStatus("生成取件码失败，请重试。");
       return;
     }
 
@@ -127,7 +135,7 @@ export default function Home() {
 
     if (uploadError) {
       setIsUploading(false);
-      setStatus("Upload failed. Check bucket policies.");
+      setStatus("上传失败，请检查存储桶策略。");
       return;
     }
 
@@ -145,26 +153,107 @@ export default function Home() {
 
     if (insertError || !insertData) {
       setIsUploading(false);
-      setStatus("Failed to save pickup code.");
+      setStatus("保存取件码失败。");
       return;
     }
 
     setGeneratedCode(nextCode);
-    setStatus("Code ready. Share it to unlock the file.");
+    setStatus("取件码已生成。");
     await buildQr(nextCode);
+    setIsModalOpen(true);
     setIsUploading(false);
   };
 
+  const stopScan = () => {
+    if (scanFrameRef.current !== null) {
+      cancelAnimationFrame(scanFrameRef.current);
+      scanFrameRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (!isScanOpen) {
+      stopScan();
+      return;
+    }
+
+    const startScan = async () => {
+      setScanError(null);
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" },
+        });
+        streamRef.current = stream;
+
+        if (!videoRef.current) return;
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+
+        const scanLoop = () => {
+          const video = videoRef.current;
+          const canvas = canvasRef.current;
+          if (!video || !canvas) {
+            scanFrameRef.current = requestAnimationFrame(scanLoop);
+            return;
+          }
+
+          const width = video.videoWidth;
+          const height = video.videoHeight;
+          if (!width || !height) {
+            scanFrameRef.current = requestAnimationFrame(scanLoop);
+            return;
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            scanFrameRef.current = requestAnimationFrame(scanLoop);
+            return;
+          }
+
+          ctx.drawImage(video, 0, 0, width, height);
+          const image = ctx.getImageData(0, 0, width, height);
+          const code = jsQR(image.data, width, height);
+
+          if (code?.data) {
+            setLookupCode(code.data.trim().toUpperCase());
+            setStatus("已识别二维码。");
+            setIsScanOpen(false);
+            return;
+          }
+
+          scanFrameRef.current = requestAnimationFrame(scanLoop);
+        };
+
+        scanFrameRef.current = requestAnimationFrame(scanLoop);
+      } catch {
+        setScanError("无法打开摄像头，请检查权限。");
+      }
+    };
+
+    void startScan();
+
+    return () => {
+      stopScan();
+    };
+  }, [isScanOpen]);
+
   const handleLookup = async () => {
     if (!lookupCode.trim()) {
-      setStatus("Enter a pickup code to continue.");
+      setStatus("请输入取件码。");
       return;
     }
     if (!ensureEnvReady()) return;
 
     const supabase = getSupabaseClient();
     if (!supabase) {
-      setStatus("Missing Supabase configuration.");
+      setStatus("缺少 Supabase 配置。");
       return;
     }
 
@@ -181,7 +270,7 @@ export default function Home() {
 
     if (error || !data) {
       setIsLookingUp(false);
-      setStatus("No match found.");
+      setStatus("未找到对应文件。");
       return;
     }
 
@@ -191,27 +280,27 @@ export default function Home() {
 
     if (!publicData.publicUrl) {
       setIsLookingUp(false);
-      setStatus("Failed to build download link.");
+      setStatus("生成下载链接失败。");
       return;
     }
 
     setDownloadUrl(publicData.publicUrl);
     setDownloadName(data.filename);
-    setStatus("File ready to download.");
+    setStatus("文件已就绪，可下载。");
     setIsLookingUp(false);
   };
 
   return (
-    <div className="min-h-screen px-6 py-16">
-      <main className="mx-auto flex w-full max-w-5xl flex-col gap-10">
-        <header className="flex flex-col gap-3">
-          <h1 className="font-[var(--font-space-grotesk)] text-5xl font-semibold uppercase tracking-[0.35em] text-foreground sm:text-6xl">
+    <div className="min-h-screen px-4 py-10 sm:px-6 sm:py-16">
+      <main className="mx-auto flex w-full max-w-5xl flex-col gap-8 sm:gap-10">
+        <header className="flex flex-col gap-2 sm:gap-3">
+          <h1 className="font-[var(--font-space-grotesk)] text-3xl font-semibold uppercase tracking-[0.2em] text-foreground sm:text-5xl sm:tracking-[0.35em]">
             QingPan
           </h1>
         </header>
 
-        <section className="grid gap-6 lg:grid-cols-2">
-          <div className="rounded-3xl border border-black/10 bg-white/80 p-8 shadow-[0_30px_80px_-50px_rgba(20,17,15,0.6)] backdrop-blur">
+        <section className="grid gap-4 sm:gap-6 lg:grid-cols-2">
+          <div className="rounded-3xl border border-black/10 bg-white/80 p-5 shadow-[0_20px_60px_-45px_rgba(20,17,15,0.5)] backdrop-blur sm:p-8">
             <label
               onDragOver={(event) => {
                 event.preventDefault();
@@ -227,7 +316,8 @@ export default function Home() {
                   void uploadFile(dropped);
                 }
               }}
-              className={`flex min-h-[240px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 text-center text-sm transition ${isDragging
+              className={`flex min-h-[200px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-4 text-center text-sm transition sm:min-h-[240px] sm:px-6 ${
+                isDragging
                   ? "border-foreground bg-black/5"
                   : "border-black/10 bg-white"
                 }`}
@@ -244,47 +334,49 @@ export default function Home() {
                   }
                 }}
               />
-              <div className="text-base font-semibold uppercase tracking-[0.3em]">
-                Upload
+              <div className="text-sm font-semibold uppercase tracking-[0.25em] sm:text-base sm:tracking-[0.3em]">
+                上传文件
               </div>
-              <div className="mt-3 text-ink-muted">
-                Click to choose a file or drag it here.
+              <div className="mt-2 text-xs text-ink-muted sm:mt-3 sm:text-sm">
+                点击选择文件，或拖拽到此处上传。
               </div>
               {isUploading ? (
-                <div className="mt-4 text-xs uppercase tracking-[0.3em] text-ink-muted">
-                  Uploading...
+                <div className="mt-3 text-[11px] uppercase tracking-[0.25em] text-ink-muted sm:mt-4 sm:text-xs sm:tracking-[0.3em]">
+                  上传中...
                 </div>
               ) : null}
               {fileMeta ? (
-                <div className="mt-4 text-xs text-ink-muted">{fileMeta}</div>
+                <div className="mt-3 text-[11px] text-ink-muted sm:mt-4 sm:text-xs">
+                  {fileMeta}
+                </div>
               ) : null}
             </label>
           </div>
 
-          <div className="rounded-3xl border border-black/10 bg-white/80 p-8 backdrop-blur">
-            <div className="flex flex-col gap-4">
+          <div className="rounded-3xl border border-black/10 bg-white/80 p-5 backdrop-blur sm:p-8">
+            <div className="flex flex-col gap-3 sm:gap-4">
               <input
                 type="text"
                 value={lookupCode}
                 onChange={(event) => setLookupCode(event.target.value.toUpperCase())}
-                placeholder="Enter pickup code"
-                className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm uppercase tracking-widest"
+                placeholder="输入取件码"
+                className="w-full rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm uppercase tracking-[0.2em] sm:tracking-widest"
               />
-              <div className="flex gap-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:gap-3">
                 <button
                   type="button"
                   onClick={handleLookup}
                   disabled={isLookingUp}
-                  className="flex-1 rounded-full bg-foreground px-5 py-3 text-sm font-semibold uppercase tracking-widest text-background transition hover:translate-y-[-1px] disabled:opacity-60"
+                  className="flex-1 rounded-full bg-foreground px-5 py-3 text-sm font-semibold uppercase tracking-[0.2em] text-background transition hover:translate-y-[-1px] disabled:opacity-60 sm:tracking-widest"
                 >
-                  {isLookingUp ? "Searching..." : "Get file"}
+                  {isLookingUp ? "查询中..." : "取件"}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setStatus("Please scan with your phone camera.")}
-                  className="flex-1 rounded-full border border-foreground/20 px-5 py-3 text-sm font-semibold uppercase tracking-widest text-foreground transition hover:border-foreground"
+                  onClick={() => setIsScanOpen(true)}
+                  className="flex-1 rounded-full border border-foreground/20 px-5 py-3 text-sm font-semibold uppercase tracking-[0.2em] text-foreground transition hover:border-foreground sm:tracking-widest"
                 >
-                  Scan QR
+                  扫码
                 </button>
               </div>
               {downloadUrl ? (
@@ -293,26 +385,89 @@ export default function Home() {
                   className="rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm font-semibold text-foreground"
                   download={downloadName ?? undefined}
                 >
-                  Download {downloadName ?? "file"}
+                  下载 {downloadName ?? "文件"}
                 </a>
               ) : null}
             </div>
           </div>
         </section>
 
-        {generatedCode ? (
-          <div className="flex flex-col gap-4 rounded-3xl border border-black/10 bg-white/80 p-6 text-sm text-foreground">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-xs uppercase tracking-[0.4em] text-ink-muted">
-                Pickup code
+        {isModalOpen ? (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) {
+                setIsModalOpen(false);
+              }
+            }}
+          >
+            <div className="w-full max-w-xs rounded-2xl bg-white p-5 text-sm text-foreground shadow-lg sm:max-w-sm sm:p-6">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-semibold sm:text-base">取件码</div>
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  className="rounded-full border border-black/10 px-3 py-1 text-xs"
+                >
+                  关闭
+                </button>
               </div>
-              <div className="font-[var(--font-space-grotesk)] text-2xl tracking-[0.2em]">
+              <div className="mt-3 text-center font-[var(--font-space-grotesk)] text-xl tracking-[0.2em] sm:mt-4 sm:text-2xl">
                 {generatedCode}
               </div>
+              <div className="mt-3 flex gap-3">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(generatedCode);
+                      setStatus("取件码已复制。");
+                    } catch {
+                      setStatus("复制失败，请手动复制。");
+                    }
+                  }}
+                  className="flex-1 rounded-full border border-black/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] sm:tracking-widest"
+                >
+                  复制取件码
+                </button>
+              </div>
+              {qrDataUrl ? (
+                <div className="mt-4 flex justify-center">
+                  <img src={qrDataUrl} alt="取件二维码" className="h-32 w-32 sm:h-40 sm:w-40" />
+                </div>
+              ) : null}
             </div>
-            {qrDataUrl ? (
-              <img src={qrDataUrl} alt="Pickup QR" className="h-32 w-32" />
-            ) : null}
+          </div>
+        ) : null}
+
+        {isScanOpen ? (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) {
+                setIsScanOpen(false);
+              }
+            }}
+          >
+            <div className="w-full max-w-xs rounded-2xl bg-white p-5 text-sm text-foreground shadow-lg sm:max-w-sm sm:p-6">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-semibold sm:text-base">扫码取件</div>
+                <button
+                  type="button"
+                  onClick={() => setIsScanOpen(false)}
+                  className="rounded-full border border-black/10 px-3 py-1 text-xs"
+                >
+                  关闭
+                </button>
+              </div>
+              <div className="mt-4 overflow-hidden rounded-2xl border border-black/10 bg-black/5">
+                <video ref={videoRef} className="h-52 w-full object-cover sm:h-64" />
+                <canvas ref={canvasRef} className="hidden" />
+              </div>
+              <div className="mt-3 text-xs text-ink-muted">
+                {scanError ?? "请对准二维码，自动识别。"}
+              </div>
+            </div>
           </div>
         ) : null}
 
