@@ -461,7 +461,7 @@ export default function Home() {
         </header>
 
         <section className="grid gap-4 sm:gap-6 lg:grid-cols-2">
-          <div className="rounded-3xl border border-black/10 bg-white p-5 shadow-[0_20px_60px_-45px_rgba(20,17,15,0.5)] sm:bg-white/80 sm:p-8 sm:backdrop-blur">
+          <div className="rounded-3xl border border-black/10 bg-white p-5 shadow-[0_20px_60px_-45px_rgba(20,17,15,0.5)] sm:bg-white/80 sm:p-8 sm:backdrop-blur qp-card">
             <label
               onDragOver={(event) => {
                 event.preventDefault();
@@ -477,7 +477,7 @@ export default function Home() {
                   void uploadFile(dropped);
                 }
               }}
-              className={`flex min-h-[200px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-4 text-center text-sm transition sm:min-h-[240px] sm:px-6 ${isDragging
+              className={`flex min-h-[200px] cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-4 text-center text-sm transition sm:min-h-[240px] sm:px-6 qp-drop ${isDragging
                 ? "border-foreground bg-black/5"
                 : "border-black/10 bg-white"
                 }`}
@@ -486,6 +486,7 @@ export default function Home() {
                 ref={fileInputRef}
                 type="file"
                 className="hidden"
+                hidden
                 onChange={(event) => {
                   const picked = event.target.files?.[0] ?? null;
                   setFile(picked);
@@ -494,47 +495,47 @@ export default function Home() {
                   }
                 }}
               />
-              <div className="text-sm font-semibold text-foreground sm:text-base sm:uppercase sm:tracking-[0.3em]">
+              <div className="text-sm font-semibold text-foreground sm:text-base sm:uppercase sm:tracking-[0.3em] qp-drop-title">
                 上传文件
               </div>
-              <div className="mt-2 text-xs text-foreground/70 sm:mt-3 sm:text-sm">
+              <div className="mt-2 text-xs text-foreground/70 sm:mt-3 sm:text-sm qp-drop-hint">
                 点击选择文件，或拖拽到此处上传。
               </div>
               {isUploading ? (
-                <div className="mt-3 text-[11px] text-foreground/60 sm:mt-4 sm:text-xs sm:uppercase sm:tracking-[0.3em]">
+                <div className="mt-3 text-[11px] text-foreground/60 sm:mt-4 sm:text-xs sm:uppercase sm:tracking-[0.3em] qp-drop-meta">
                   上传中...
                 </div>
               ) : null}
               {fileMeta ? (
-                <div className="mt-3 text-[11px] text-foreground/60 sm:mt-4 sm:text-xs">
+                <div className="mt-3 text-[11px] text-foreground/60 sm:mt-4 sm:text-xs qp-drop-meta">
                   {fileMeta}
                 </div>
               ) : null}
             </label>
           </div>
 
-          <div className="rounded-3xl border border-black/10 bg-white p-5 sm:bg-white/80 sm:p-8 sm:backdrop-blur">
-            <div className="flex min-h-[240px] flex-col items-center justify-center gap-3 text-center sm:gap-4">
+          <div className="rounded-3xl border border-black/10 bg-white p-5 sm:bg-white/80 sm:p-8 sm:backdrop-blur qp-card">
+            <div className="flex min-h-[240px] flex-col items-center justify-center gap-3 text-center sm:gap-4 qp-pickup">
               <input
                 type="text"
                 value={lookupCode}
                 onChange={(event) => setLookupCode(event.target.value.toUpperCase())}
                 placeholder="输入取件码"
-                className="w-full max-w-sm rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm tracking-[0.15em] sm:uppercase sm:tracking-widest"
+                className="w-full max-w-sm rounded-2xl border border-black/10 bg-white px-4 py-3 text-sm tracking-[0.15em] sm:uppercase sm:tracking-widest qp-input"
               />
               <div className="flex w-full max-w-sm flex-col gap-2 sm:flex-row sm:gap-3">
                 <button
                   type="button"
                   onClick={handleLookup}
                   disabled={isLookingUp}
-                  className="flex-1 rounded-full bg-foreground px-5 py-3 text-sm font-semibold uppercase tracking-[0.2em] text-background transition hover:translate-y-[-1px] disabled:opacity-60 sm:tracking-widest"
+                  className="flex-1 rounded-full bg-foreground px-5 py-3 text-sm font-semibold uppercase tracking-[0.2em] text-background transition hover:translate-y-[-1px] disabled:opacity-60 sm:tracking-widest qp-btn"
                 >
                   {isLookingUp ? "查询中..." : "取件"}
                 </button>
                 <button
                   type="button"
                   onClick={() => setIsScanOpen(true)}
-                  className="flex-1 rounded-full border border-foreground/20 px-5 py-3 text-sm font-semibold uppercase tracking-[0.2em] text-foreground transition hover:border-foreground sm:tracking-widest"
+                  className="flex-1 rounded-full border border-foreground/20 px-5 py-3 text-sm font-semibold uppercase tracking-[0.2em] text-foreground transition hover:border-foreground sm:tracking-widest qp-btn qp-btn-outline"
                 >
                   扫码
                 </button>
