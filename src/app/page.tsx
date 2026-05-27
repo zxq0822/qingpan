@@ -589,10 +589,17 @@ export default function Home() {
                   ref={fileInputRef}
                   type="file"
                   onChange={(event) => {
-                    const picked = event.target.files?.[0] ?? null;
+                    const picked = event.currentTarget.files?.[0] ?? null;
                     setFile(picked);
                     if (picked) {
+                      pushLog(`已选择文件：${picked.name}`);
                       void uploadFile(picked);
+                    }
+                  }}
+                  onInput={(event) => {
+                    const picked = event.currentTarget.files?.[0] ?? null;
+                    if (picked) {
+                      pushLog(`触发输入：${picked.name}`);
                     }
                   }}
                   className="mt-3 w-full max-w-xs rounded-xl border border-black/10 bg-white px-3 py-2 text-xs"
