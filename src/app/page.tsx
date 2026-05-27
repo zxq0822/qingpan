@@ -37,8 +37,10 @@ export default function Home() {
   );
   const [isDragging, setIsDragging] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [dismissedModal, setDismissedModal] = useState(false);
   const [isScanOpen, setIsScanOpen] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [uploadLog, setUploadLog] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -50,6 +52,13 @@ export default function Home() {
     const sizeMb = file.size / (1024 * 1024);
     return `${file.name} · ${sizeMb.toFixed(2)} MB`;
   }, [file]);
+
+  const pushLog = (message: string) => {
+    setUploadLog((prev) => {
+      const next = [...prev, message];
+      return next.slice(-6);
+    });
+  };
 
   const buildQr = async (code: string) => {
     setIsGenerating(true);
@@ -147,6 +156,7 @@ export default function Home() {
   };
 
   const uploadFile = async (nextFile: File) => {
+    pushLog(`选择文件：${nextFile.name}`);
     if (!ensureEnvReady()) return;
 
     const supabase = getSupabaseClient();
@@ -156,7 +166,8 @@ export default function Home() {
     }
 
     setIsUploading(true);
-    setStatus(null);
+    setStatus("上传中...");
+    pushLog("开始上传");
     setDownloadUrl(null);
     setDownloadName(null);
     setQrDataUrl(null);
@@ -164,6 +175,7 @@ export default function Home() {
     setUploadedPath(null);
     setUploadedFileName(null);
     setExpiresAt(null);
+    setDismissedModal(false);
     setIsModalOpen(false);
 
     let nextCode = createRandomCode().toUpperCase();
@@ -193,9 +205,12 @@ export default function Home() {
 
     if (uploadError) {
       setIsUploading(false);
-      setStatus("上传失败，请检查存储桶策略。");
+      setStatus(`上传失败：${uploadError.message}`);
+      pushLog(`上传失败：${uploadError.message}`);
       return;
     }
+
+    pushLog("上传完成，保存取件码");
 
     const { data: insertData, error: insertError } = await supabase
       .from("qingpan_files")
@@ -212,7 +227,8 @@ export default function Home() {
 
     if (insertError || !insertData) {
       setIsUploading(false);
-      setStatus("保存取件码失败。");
+      setStatus(`保存取件码失败：${insertError?.message ?? "未知错误"}`);
+      pushLog(`保存取件码失败：${insertError?.message ?? "未知错误"}`);
       return;
     }
 
@@ -221,8 +237,9 @@ export default function Home() {
     setUploadedFileName(nextFile.name);
     setExpiresAt(expiresAt);
     setStatus("取件码已生成。");
-    await buildQr(nextCode);
+    pushLog(`取件码已生成：${nextCode}`);
     setIsModalOpen(true);
+    await buildQr(nextCode);
     setIsUploading(false);
   };
 
@@ -322,6 +339,12 @@ export default function Home() {
       streamRef.current = null;
     }
   };
+
+  useEffect(() => {
+    if (generatedCode && !isModalOpen && !dismissedModal) {
+      setIsModalOpen(true);
+    }
+  }, [generatedCode, isModalOpen, dismissedModal]);
 
   useEffect(() => {
     if (!isScanOpen) {
@@ -501,6 +524,13 @@ export default function Home() {
               <div className="mt-2 text-xs text-foreground/70 sm:mt-3 sm:text-sm qp-drop-hint">
                 点击选择文件，或拖拽到此处上传。
               </div>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="mt-3 rounded-full border border-black/10 px-4 py-2 text-xs font-semibold"
+              >
+                选择文件
+              </button>
               {isUploading ? (
                 <div className="mt-3 text-[11px] text-foreground/60 sm:mt-4 sm:text-xs sm:uppercase sm:tracking-[0.3em] qp-drop-meta">
                   上传中...
@@ -512,6 +542,18 @@ export default function Home() {
                 </div>
               ) : null}
             </label>
+            {uploadLog.length > 0 ? (
+              <div className="mt-4 rounded-2xl border border-black/10 bg-white px-3 py-2 text-[11px] text-foreground/70">
+                <div className="text-[10px] uppercase tracking-[0.2em] text-ink-muted">
+                  上传日志
+                </div>
+                <div className="mt-2 flex flex-col gap-1">
+                  {uploadLog.map((item, index) => (
+                    <span key={`${item}-${index}`}>{item}</span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="rounded-3xl border border-black/10 bg-white p-5 sm:bg-white/80 sm:p-8 sm:backdrop-blur qp-card">
@@ -590,11 +632,25 @@ export default function Home() {
           </div>
         ) : null}
 
+        {generatedCode ? (
+          <div className="flex items-center justify-between gap-3 rounded-2xl border border-black/10 bg-white/80 px-4 py-3 text-xs text-foreground">
+            <span>已生成取件码</span>
+            <button
+              type="button"
+              onClick={() => setIsModalOpen(true)}
+              className="rounded-full border border-black/10 px-3 py-1"
+            >
+              查看
+            </button>
+          </div>
+        ) : null}
+
         {isModalOpen ? (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
             onClick={(event) => {
               if (event.target === event.currentTarget) {
+                setDismissedModal(true);
                 setIsModalOpen(false);
               }
             }}
@@ -604,7 +660,10 @@ export default function Home() {
                 <div className="text-sm font-semibold sm:text-base">取件码</div>
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={() => {
+                    setDismissedModal(true);
+                    setIsModalOpen(false);
+                  }}
                   className="rounded-full border border-black/10 px-3 py-1 text-xs"
                 >
                   关闭
