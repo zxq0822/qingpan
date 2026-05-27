@@ -68,6 +68,16 @@ export default function Home() {
     }
   };
 
+  const startUploadFromInput = () => {
+    const picked = fileInputRef.current?.files?.[0] ?? null;
+    if (!picked) {
+      setStatus("未选择文件。");
+      pushLog("未检测到已选择文件");
+      return;
+    }
+    handlePickedFile(picked);
+  };
+
   const buildQr = async (code: string) => {
     setIsGenerating(true);
     try {
@@ -622,6 +632,13 @@ export default function Home() {
                   }}
                   className="mt-3 w-full max-w-xs rounded-xl border border-black/10 bg-white px-3 py-2 text-xs"
                 />
+                <button
+                  type="button"
+                  onClick={startUploadFromInput}
+                  className="mt-2 rounded-full border border-black/10 px-4 py-2 text-xs font-semibold"
+                >
+                  开始上传
+                </button>
                 {isUploading ? (
                   <div className="mt-3 text-[11px] text-foreground/60 sm:mt-4 sm:text-xs sm:uppercase sm:tracking-[0.3em] qp-drop-meta">
                     上传中...
