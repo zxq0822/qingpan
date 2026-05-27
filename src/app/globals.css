@@ -29,6 +29,12 @@ body {
   background-attachment: fixed;
 }
 
+@media (max-width: 640px) {
+  body {
+    background-image: none;
+  }
+}
+
 ::selection {
   background: rgba(240, 93, 35, 0.25);
 }
