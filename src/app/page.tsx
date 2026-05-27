@@ -36,8 +36,7 @@ export default function Home() {
     "24h"
   );
   const [isDragging, setIsDragging] = useState(false);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [dismissedModal, setDismissedModal] = useState(false);
+  const [showUploadResult, setShowUploadResult] = useState(false);
   const [isScanOpen, setIsScanOpen] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [uploadLog, setUploadLog] = useState<string[]>([]);
@@ -83,10 +82,12 @@ export default function Home() {
   const ensureEnvReady = () => {
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
       setStatus("缺少环境变量 NEXT_PUBLIC_SUPABASE_URL。");
+      pushLog("缺少环境变量 NEXT_PUBLIC_SUPABASE_URL");
       return false;
     }
     if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
       setStatus("缺少环境变量 NEXT_PUBLIC_SUPABASE_ANON_KEY。");
+      pushLog("缺少环境变量 NEXT_PUBLIC_SUPABASE_ANON_KEY");
       return false;
     }
     return true;
@@ -162,12 +163,13 @@ export default function Home() {
     const supabase = getSupabaseClient();
     if (!supabase) {
       setStatus("缺少 Supabase 配置。");
+      pushLog("缺少 Supabase 配置");
       return;
     }
 
     setIsUploading(true);
     setStatus("上传中...");
-    pushLog("开始上传");
+    pushLog("准备上传");
     setDownloadUrl(null);
     setDownloadName(null);
     setQrDataUrl(null);
@@ -175,72 +177,76 @@ export default function Home() {
     setUploadedPath(null);
     setUploadedFileName(null);
     setExpiresAt(null);
-    setDismissedModal(false);
-    setIsModalOpen(false);
+    setShowUploadResult(false);
 
-    let nextCode = createRandomCode().toUpperCase();
-    let attempts = 0;
-    while (attempts < 5) {
-      const available = await reserveCode(nextCode);
-      if (available) break;
-      nextCode = createRandomCode();
-      attempts += 1;
-    }
+    try {
+      let nextCode = createRandomCode().toUpperCase();
+      let attempts = 0;
+      while (attempts < 5) {
+        const available = await reserveCode(nextCode);
+        if (available) break;
+        nextCode = createRandomCode();
+        attempts += 1;
+      }
 
-    if (attempts === 5) {
+      if (attempts === 5) {
+        setStatus("生成取件码失败，请重试。");
+        return;
+      }
+
+      const safeName = sanitizeFileName(nextFile.name);
+      const storagePath = `${nextCode}/${Date.now()}_${safeName}`;
+      const expiresAt = buildExpiresAt(expiryOption);
+
+      pushLog("开始上传到存储桶");
+      const { error: uploadError } = await supabase.storage
+        .from(SUPABASE_BUCKET)
+        .upload(storagePath, nextFile, {
+          upsert: false,
+          cacheControl: "3600",
+        });
+
+      if (uploadError) {
+        setStatus(`上传失败：${uploadError.message}`);
+        pushLog(`上传失败：${uploadError.message}`);
+        return;
+      }
+
+      pushLog("上传完成，写入取件码");
+      const { data: insertData, error: insertError } = await supabase
+        .from("qingpan_files")
+        .insert({
+          code: nextCode,
+          path: storagePath,
+          filename: nextFile.name,
+          size: nextFile.size,
+          content_type: nextFile.type,
+          expires_at: expiresAt,
+        })
+        .select("code")
+        .single();
+
+      if (insertError || !insertData) {
+        setStatus(`保存取件码失败：${insertError?.message ?? "未知错误"}`);
+        pushLog(`保存取件码失败：${insertError?.message ?? "未知错误"}`);
+        return;
+      }
+
+      setGeneratedCode(nextCode);
+      setUploadedPath(storagePath);
+      setUploadedFileName(nextFile.name);
+      setExpiresAt(expiresAt);
+      setStatus("取件码已生成。");
+      pushLog(`取件码已生成：${nextCode}`);
+      setShowUploadResult(true);
+      await buildQr(nextCode);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "未知错误";
+      setStatus(`上传异常：${message}`);
+      pushLog(`上传异常：${message}`);
+    } finally {
       setIsUploading(false);
-      setStatus("生成取件码失败，请重试。");
-      return;
     }
-
-    const safeName = sanitizeFileName(nextFile.name);
-    const storagePath = `${nextCode}/${Date.now()}_${safeName}`;
-    const expiresAt = buildExpiresAt(expiryOption);
-
-    const { error: uploadError } = await supabase.storage
-      .from(SUPABASE_BUCKET)
-      .upload(storagePath, nextFile, {
-        upsert: false,
-      });
-
-    if (uploadError) {
-      setIsUploading(false);
-      setStatus(`上传失败：${uploadError.message}`);
-      pushLog(`上传失败：${uploadError.message}`);
-      return;
-    }
-
-    pushLog("上传完成，保存取件码");
-
-    const { data: insertData, error: insertError } = await supabase
-      .from("qingpan_files")
-      .insert({
-        code: nextCode,
-        path: storagePath,
-        filename: nextFile.name,
-        size: nextFile.size,
-        content_type: nextFile.type,
-        expires_at: expiresAt,
-      })
-      .select("code")
-      .single();
-
-    if (insertError || !insertData) {
-      setIsUploading(false);
-      setStatus(`保存取件码失败：${insertError?.message ?? "未知错误"}`);
-      pushLog(`保存取件码失败：${insertError?.message ?? "未知错误"}`);
-      return;
-    }
-
-    setGeneratedCode(nextCode);
-    setUploadedPath(storagePath);
-    setUploadedFileName(nextFile.name);
-    setExpiresAt(expiresAt);
-    setStatus("取件码已生成。");
-    pushLog(`取件码已生成：${nextCode}`);
-    setIsModalOpen(true);
-    await buildQr(nextCode);
-    setIsUploading(false);
   };
 
   const updateExpiry = async (option: "24h" | "7d" | "forever") => {
@@ -339,12 +345,6 @@ export default function Home() {
       streamRef.current = null;
     }
   };
-
-  useEffect(() => {
-    if (generatedCode && !isModalOpen && !dismissedModal) {
-      setIsModalOpen(true);
-    }
-  }, [generatedCode, isModalOpen, dismissedModal]);
 
   useEffect(() => {
     if (!isScanOpen) {
@@ -474,6 +474,17 @@ export default function Home() {
     setIsLookingUp(false);
   };
 
+  const resetUploadPanel = () => {
+    setGeneratedCode("");
+    setUploadedPath(null);
+    setUploadedFileName(null);
+    setQrDataUrl(null);
+    setExpiresAt(null);
+    setShowUploadResult(false);
+    setStatus(null);
+    setUploadLog([]);
+  };
+
   return (
     <div className="min-h-screen px-4 py-10 sm:px-6 sm:py-16">
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-8 sm:gap-10">
@@ -485,64 +496,132 @@ export default function Home() {
 
         <section className="grid gap-4 sm:gap-6 lg:grid-cols-2">
           <div className="rounded-3xl border border-black/10 bg-white p-5 shadow-[0_20px_60px_-45px_rgba(20,17,15,0.5)] sm:bg-white/80 sm:p-8 sm:backdrop-blur qp-card">
-            <div
-              onDragOver={(event) => {
-                event.preventDefault();
-                setIsDragging(true);
-              }}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={(event) => {
-                event.preventDefault();
-                setIsDragging(false);
-                const dropped = event.dataTransfer.files?.[0];
-                if (dropped) {
-                  setFile(dropped);
-                  void uploadFile(dropped);
-                }
-              }}
-              className={`flex min-h-[200px] flex-col items-center justify-center rounded-2xl border-2 border-dashed px-4 text-center text-sm transition sm:min-h-[240px] sm:px-6 qp-drop ${isDragging
-                ? "border-foreground bg-black/5"
-                : "border-black/10 bg-white"
-                }`}
-            >
-              <div className="text-sm font-semibold text-foreground sm:text-base sm:uppercase sm:tracking-[0.3em] qp-drop-title">
-                上传文件
+            {showUploadResult && generatedCode ? (
+              <div className="flex flex-col items-center gap-4 text-center">
+                <div className="text-xs uppercase tracking-[0.3em] text-ink-muted">
+                  取件码
+                </div>
+                <div className="font-[var(--font-display)] text-2xl tracking-[0.2em]">
+                  {generatedCode}
+                </div>
+                {qrDataUrl ? (
+                  <img src={qrDataUrl} alt="取件二维码" className="h-32 w-32" />
+                ) : null}
+                <div className="text-xs text-ink-muted">
+                  到期时间：{formatExpiryText(expiresAt, expiryOption)}
+                </div>
+                <div className="flex w-full flex-col gap-2 sm:flex-row sm:gap-3">
+                  <button
+                    type="button"
+                    onClick={refreshCode}
+                    disabled={isRefreshing}
+                    className="flex-1 rounded-full border border-black/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] disabled:opacity-60"
+                  >
+                    {isRefreshing ? "刷新中..." : "刷新取件码"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(generatedCode);
+                        setStatus("取件码已复制。");
+                      } catch {
+                        setStatus("复制失败，请手动复制。");
+                      }
+                    }}
+                    className="flex-1 rounded-full border border-black/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em]"
+                  >
+                    复制取件码
+                  </button>
+                </div>
+                <div className="flex w-full flex-col gap-2">
+                  <div className="text-[11px] uppercase tracking-[0.25em] text-ink-muted">
+                    有效期
+                  </div>
+                  <select
+                    value={expiryOption}
+                    onChange={(event) =>
+                      updateExpiry(event.target.value as "24h" | "7d" | "forever")
+                    }
+                    className="w-full rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em]"
+                  >
+                    <option value="24h">24小时</option>
+                    <option value="7d">7天</option>
+                    <option value="forever">永久</option>
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  onClick={resetUploadPanel}
+                  className="mt-1 rounded-full bg-foreground px-5 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-background"
+                >
+                  继续上传
+                </button>
               </div>
-              <div className="mt-2 text-xs text-foreground/70 sm:mt-3 sm:text-sm qp-drop-hint">
-                点击下方选择文件，或拖拽到此处上传。
-              </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                onChange={(event) => {
-                  const picked = event.target.files?.[0] ?? null;
-                  setFile(picked);
-                  if (picked) {
-                    void uploadFile(picked);
+            ) : (
+              <div
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setIsDragging(true);
+                }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  setIsDragging(false);
+                  const dropped = event.dataTransfer.files?.[0];
+                  if (dropped) {
+                    setFile(dropped);
+                    void uploadFile(dropped);
                   }
                 }}
-                className="mt-3 w-full max-w-xs rounded-xl border border-black/10 bg-white px-3 py-2 text-xs"
-              />
-              {isUploading ? (
-                <div className="mt-3 text-[11px] text-foreground/60 sm:mt-4 sm:text-xs sm:uppercase sm:tracking-[0.3em] qp-drop-meta">
-                  上传中...
+                className={`flex min-h-[200px] flex-col items-center justify-center rounded-2xl border-2 border-dashed px-4 text-center text-sm transition sm:min-h-[240px] sm:px-6 qp-drop ${isDragging
+                  ? "border-foreground bg-black/5"
+                  : "border-black/10 bg-white"
+                  }`}
+              >
+                <div className="text-sm font-semibold text-foreground sm:text-base sm:uppercase sm:tracking-[0.3em] qp-drop-title">
+                  上传文件
                 </div>
-              ) : null}
-              {fileMeta ? (
-                <div className="mt-3 text-[11px] text-foreground/60 sm:mt-4 sm:text-xs qp-drop-meta">
-                  {fileMeta}
+                <div className="mt-2 text-xs text-foreground/70 sm:mt-3 sm:text-sm qp-drop-hint">
+                  点击下方选择文件，或拖拽到此处上传。
                 </div>
-              ) : null}
-            </div>
-            {uploadLog.length > 0 ? (
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  onChange={(event) => {
+                    const picked = event.target.files?.[0] ?? null;
+                    setFile(picked);
+                    if (picked) {
+                      void uploadFile(picked);
+                    }
+                  }}
+                  className="mt-3 w-full max-w-xs rounded-xl border border-black/10 bg-white px-3 py-2 text-xs"
+                />
+                {isUploading ? (
+                  <div className="mt-3 text-[11px] text-foreground/60 sm:mt-4 sm:text-xs sm:uppercase sm:tracking-[0.3em] qp-drop-meta">
+                    上传中...
+                  </div>
+                ) : null}
+                {fileMeta ? (
+                  <div className="mt-3 text-[11px] text-foreground/60 sm:mt-4 sm:text-xs qp-drop-meta">
+                    {fileMeta}
+                  </div>
+                ) : null}
+              </div>
+            )}
+            {!showUploadResult ? (
               <div className="mt-4 rounded-2xl border border-black/10 bg-white px-3 py-2 text-[11px] text-foreground/70">
                 <div className="text-[10px] uppercase tracking-[0.2em] text-ink-muted">
                   上传日志
                 </div>
                 <div className="mt-2 flex flex-col gap-1">
-                  {uploadLog.map((item, index) => (
-                    <span key={`${item}-${index}`}>{item}</span>
-                  ))}
+                  {uploadLog.length === 0 ? (
+                    <span>等待选择文件...</span>
+                  ) : (
+                    uploadLog.map((item, index) => (
+                      <span key={`${item}-${index}`}>{item}</span>
+                    ))
+                  )}
                 </div>
               </div>
             ) : null}
@@ -624,112 +703,7 @@ export default function Home() {
           </div>
         ) : null}
 
-        {generatedCode ? (
-          <div className="flex items-center justify-between gap-3 rounded-2xl border border-black/10 bg-white/80 px-4 py-3 text-xs text-foreground">
-            <span>已生成取件码</span>
-            <button
-              type="button"
-              onClick={() => setIsModalOpen(true)}
-              className="rounded-full border border-black/10 px-3 py-1"
-            >
-              查看
-            </button>
-          </div>
-        ) : null}
 
-        {isModalOpen ? (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
-            onClick={(event) => {
-              if (event.target === event.currentTarget) {
-                setDismissedModal(true);
-                setIsModalOpen(false);
-              }
-            }}
-          >
-            <div className="w-full max-w-xs rounded-2xl bg-white p-5 text-sm text-foreground shadow-lg sm:max-w-sm sm:p-6">
-              <div className="flex items-center justify-between">
-                <div className="text-sm font-semibold sm:text-base">取件码</div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDismissedModal(true);
-                    setIsModalOpen(false);
-                  }}
-                  className="rounded-full border border-black/10 px-3 py-1 text-xs"
-                >
-                  关闭
-                </button>
-              </div>
-              <div className="mt-3 text-center font-[var(--font-display)] text-xl tracking-[0.2em] sm:mt-4 sm:text-2xl">
-                {generatedCode}
-              </div>
-              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:gap-3">
-                <button
-                  type="button"
-                  onClick={refreshCode}
-                  disabled={isRefreshing}
-                  className="flex h-9 w-9 items-center justify-center rounded-full border border-black/10 text-xs font-semibold disabled:opacity-60"
-                  aria-label="刷新取件码"
-                  title="刷新取件码"
-                >
-                  <span className="sr-only">刷新取件码</span>
-                  <svg
-                    className={isRefreshing ? "h-4 w-4 animate-spin" : "h-4 w-4"}
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-                    <path d="M21 3v6h-6" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(generatedCode);
-                      setStatus("取件码已复制。");
-                    } catch {
-                      setStatus("复制失败，请手动复制。");
-                    }
-                  }}
-                  className="flex-1 rounded-full border border-black/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] sm:tracking-widest"
-                >
-                  复制取件码
-                </button>
-              </div>
-              <div className="mt-3 flex flex-col gap-2">
-                <div className="text-[11px] uppercase tracking-[0.25em] text-ink-muted">
-                  有效期
-                </div>
-                <select
-                  value={expiryOption}
-                  onChange={(event) =>
-                    updateExpiry(event.target.value as "24h" | "7d" | "forever")
-                  }
-                  className="w-full rounded-2xl border border-black/10 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em]"
-                >
-                  <option value="24h">24小时</option>
-                  <option value="7d">7天</option>
-                  <option value="forever">永久</option>
-                </select>
-                <div className="text-xs text-ink-muted">
-                  到期时间：{formatExpiryText(expiresAt, expiryOption)}
-                </div>
-              </div>
-              {qrDataUrl ? (
-                <div className="mt-4 flex justify-center">
-                  <img src={qrDataUrl} alt="取件二维码" className="h-32 w-32 sm:h-40 sm:w-40" />
-                </div>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
 
         {isScanOpen ? (
           <div
