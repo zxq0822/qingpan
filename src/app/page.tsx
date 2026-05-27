@@ -41,6 +41,7 @@ export default function Home() {
   const [scanError, setScanError] = useState<string | null>(null);
   const [uploadLog, setUploadLog] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadFileRef = useRef<((file: File) => Promise<void>) | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const scanFrameRef = useRef<number | null>(null);
@@ -57,6 +58,14 @@ export default function Home() {
       const next = [...prev, message];
       return next.slice(-6);
     });
+  };
+
+  const handlePickedFile = (picked: File | null) => {
+    setFile(picked);
+    if (picked) {
+      pushLog(`已选择文件：${picked.name}`);
+      uploadFileRef.current?.(picked);
+    }
   };
 
   const buildQr = async (code: string) => {
@@ -248,6 +257,25 @@ export default function Home() {
       setIsUploading(false);
     }
   };
+
+  useEffect(() => {
+    uploadFileRef.current = uploadFile;
+  }, [uploadFile]);
+
+  useEffect(() => {
+    const input = fileInputRef.current;
+    if (!input) return;
+
+    const handler = () => {
+      const picked = input.files?.[0] ?? null;
+      handlePickedFile(picked);
+    };
+
+    input.addEventListener("change", handler);
+    return () => {
+      input.removeEventListener("change", handler);
+    };
+  }, []);
 
   const updateExpiry = async (option: "24h" | "7d" | "forever") => {
     setExpiryOption(option);
@@ -590,17 +618,7 @@ export default function Home() {
                   type="file"
                   onChange={(event) => {
                     const picked = event.currentTarget.files?.[0] ?? null;
-                    setFile(picked);
-                    if (picked) {
-                      pushLog(`已选择文件：${picked.name}`);
-                      void uploadFile(picked);
-                    }
-                  }}
-                  onInput={(event) => {
-                    const picked = event.currentTarget.files?.[0] ?? null;
-                    if (picked) {
-                      pushLog(`触发输入：${picked.name}`);
-                    }
+                    handlePickedFile(picked);
                   }}
                   className="mt-3 w-full max-w-xs rounded-xl border border-black/10 bg-white px-3 py-2 text-xs"
                 />
